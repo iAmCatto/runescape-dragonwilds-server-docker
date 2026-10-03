@@ -22,7 +22,6 @@ else
     LogWarn "UPDATE_ON_START is set to false, skipping server update"
 fi
 
-chown -R steam:steam /home/steam/server-files
 chmod +x /home/steam/server-files/RSDragonwilds/Binaries/Linux/RSDragonwildsServer-Linux-Shipping 2>/dev/null || true
 chmod +x /home/steam/server-files/RSDragonwilds/Plugins/Developer/Sentry/Binaries/Linux/crashpad_handler 2>/dev/null || true
 
@@ -53,7 +52,7 @@ ServerName=${SERVER_NAME}
 DefaultWorldName=${DEFAULT_WORLD_NAME}
 ServerGuid=${SERVER_GUID}
 TEMPLATE
-chown steam:steam "$CONFIG_FILE"
+chown -R steam:steam /home/steam/server-files
 
 # shellcheck disable=SC2317
 term_handler() {
