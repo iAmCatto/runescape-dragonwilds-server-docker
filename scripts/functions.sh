@@ -39,21 +39,62 @@ Log() {
   printf "$color%s$RESET$LINE" "$prefix$message$suffix"
 }
 
+# UE4SS needs the Windows build, names match Unreal's pak and Saved/Config folders
+if [ "${UE4SS_ENABLED}" = "true" ]; then
+  SERVER_PLATFORM="WindowsServer"
+  OTHER_SERVER_PLATFORM="LinuxServer"
+  DEPOT_OS="windows"
+else
+  SERVER_PLATFORM="LinuxServer"
+  OTHER_SERVER_PLATFORM="WindowsServer"
+  DEPOT_OS="linux"
+fi
+
 install() {
   LogAction "Starting server install"
-  LogInfo "Installing RuneScape: DragonWilds Dedicated Server"
+  LogInfo "Installing RuneScape: DragonWilds Dedicated Server (${SERVER_PLATFORM})"
+
+  # Unreal loads every pak in Content/Paks, so drop the other build's paks
+  local paks_dir="/home/steam/server-files/RSDragonwilds/Content/Paks"
+  if compgen -G "$paks_dir/RSDragonwilds-${OTHER_SERVER_PLATFORM}.*" > /dev/null; then
+    LogWarn "Removing ${OTHER_SERVER_PLATFORM} content from the previous server build"
+    rm -f "$paks_dir/RSDragonwilds-${OTHER_SERVER_PLATFORM}".{pak,ucas,utoc}
+  fi
 
   /depotdownloader/DepotDownloader \
     -app 4019830 \
-    -os linux \
+    -os "$DEPOT_OS" \
     -dir /home/steam/server-files \
     -validate
 
   LogSuccess "Server install complete"
 }
 
+# Installs UE4SS if missing, keeping existing settings and mods
+install_ue4ss() {
+  local win64_dir="/home/steam/server-files/RSDragonwilds/Binaries/Win64"
+
+  # Wine never loads UE4SS's dwmapi.dll itself, so version.dll loads it
+  mkdir -p "$win64_dir"
+  cp -f /ue4ss/version.dll "$win64_dir/"
+
+  if [ -f "$win64_dir/ue4ss/UE4SS.dll" ]; then
+    LogInfo "UE4SS is already installed, skipping install"
+    return 0
+  fi
+
+  LogAction "Installing UE4SS"
+
+  # Add missing files without overwriting settings or mods, then refresh the DLLs
+  unzip -qn /ue4ss/UE4SS.zip -d "$win64_dir" &&
+    unzip -qo /ue4ss/UE4SS.zip dwmapi.dll ue4ss/UE4SS.dll -d "$win64_dir" || return 1
+
+  LogSuccess "UE4SS install complete"
+}
+
+# Anchored to skip Wine's start.exe, which only has the path as an argument
 server_pid() {
-  pgrep -o -f "Binaries/Linux/RSDragonwildsServer-Linux-Shipping"
+  pgrep -o -f "^[^ ]*RSDragonwildsServer-(Linux|Win64)-Shipping"
 }
 
 # Attempt to shutdown the server gracefully
@@ -66,8 +107,14 @@ shutdown_server() {
   local pid
   pid=$(server_pid)
 
+  # Wine passes SIGINT on as Ctrl-C, which Unreal handles as a graceful exit
+  local signal="SIGTERM"
+  if [ "${UE4SS_ENABLED}" = "true" ]; then
+    signal="SIGINT"
+  fi
+
   if [ -n "$pid" ]; then
-    kill -SIGTERM "$pid"
+    kill -"$signal" "$pid"
 
     local count=0
     while [ $count -lt 30 ] && kill -0 "$pid" 2>/dev/null; do

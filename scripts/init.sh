@@ -12,9 +12,15 @@ else
     groupmod -o -g "${PGID}" steam
 fi
 
-chown -R steam:steam /home/steam/
+# Only chown what is needed, so each container does not get its own copy of the Wine prefix
+find /home/steam \( ! -user steam -o ! -group steam \) -exec chown -h steam:steam {} +
 
 cat /branding
+
+if [ "${UE4SS_ENABLED}" = "true" ] && ! command -v wine > /dev/null; then
+    LogError "UE4SS_ENABLED is true, but this image does not include Wine. Use the ue4ss image tag instead."
+    exit 1
+fi
 
 if [ "${UPDATE_ON_START:-true}" = "true" ]; then
     install
@@ -25,18 +31,25 @@ fi
 chmod +x /home/steam/server-files/RSDragonwilds/Binaries/Linux/RSDragonwildsServer-Linux-Shipping 2>/dev/null || true
 chmod +x /home/steam/server-files/RSDragonwilds/Plugins/Developer/Sentry/Binaries/Linux/crashpad_handler 2>/dev/null || true
 
+if [ "${UE4SS_ENABLED}" = "true" ] && ! install_ue4ss; then
+    LogError "UE4SS_ENABLED is true but UE4SS could not be installed."
+    exit 1
+fi
+
 if [ -z "${OWNER_ID}" ]; then
     LogError "OWNER_ID is not set. The server cannot start without your RuneScape: DragonWilds Player ID."
     LogError "Find your Player ID in-game at the bottom of the Settings Menu."
     exit 1
 fi
 
-CONFIG_DIR="/home/steam/server-files/RSDragonwilds/Saved/Config/LinuxServer"
+CONFIG_ROOT="/home/steam/server-files/RSDragonwilds/Saved/Config"
+CONFIG_DIR="$CONFIG_ROOT/$SERVER_PLATFORM"
 CONFIG_FILE="$CONFIG_DIR/DedicatedServer.ini"
 
 mkdir -p "$CONFIG_DIR"
 
-SERVER_GUID=$(sed -n 's/^ServerGuid=\([0-9A-Fa-f]*\).*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n1)
+# Keep the GUID when switching between the Linux and Windows builds
+SERVER_GUID=$(sed -n 's/^ServerGuid=\([0-9A-Fa-f]\+\).*/\1/p' "$CONFIG_FILE" "$CONFIG_ROOT/$OTHER_SERVER_PLATFORM/DedicatedServer.ini" 2>/dev/null | head -n1)
 export SERVER_GUID
 
 LogInfo "Writing DedicatedServer.ini"
@@ -66,7 +79,7 @@ term_handler() {
 trap 'term_handler' SIGTERM
 
 # Start the server as steam user
-export DEFAULT_PORT BEACON_PORT SERVER_NAME DEFAULT_WORLD_NAME OWNER_ID ADMIN_PASSWORD WORLD_PASSWORD MAX_PLAYERS MULTIHOME
+export DEFAULT_PORT BEACON_PORT SERVER_NAME DEFAULT_WORLD_NAME OWNER_ID ADMIN_PASSWORD WORLD_PASSWORD MAX_PLAYERS MULTIHOME UE4SS_ENABLED
 
 su -m steam -c "cd /home/steam/server && ./start.sh" &
 

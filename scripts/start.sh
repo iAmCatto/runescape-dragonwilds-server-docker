@@ -10,25 +10,46 @@ LogAction "Starting RuneScape: DragonWilds Dedicated Server"
 
 DEFAULT_PORT="${DEFAULT_PORT:-7777}"
 
-SERVER_EXEC="$SERVER_FILES/RSDragonwilds/Binaries/Linux/RSDragonwildsServer-Linux-Shipping"
+if [ "${UE4SS_ENABLED}" = "true" ]; then
+    SERVER_EXEC="$SERVER_FILES/RSDragonwilds/Binaries/Win64/RSDragonwildsServer-Win64-Shipping.exe"
+else
+    SERVER_EXEC="$SERVER_FILES/RSDragonwilds/Binaries/Linux/RSDragonwildsServer-Linux-Shipping"
+fi
 
 if [ ! -f "$SERVER_EXEC" ]; then
     LogError "Could not find server executable at: $SERVER_EXEC"
     exit 1
 fi
 
-chmod +x "$SERVER_EXEC"
-
 LogInfo "Server starting on port ${DEFAULT_PORT} (UDP)"
 LogInfo "World settings beacon port: ${BEACON_PORT} (UDP)"
 LogInfo "Server name: ${SERVER_NAME}"
 LogInfo "Default world: ${DEFAULT_WORLD_NAME}"
 
-LAUNCH_ARGS="RSDragonwilds -log -NewConsole -Port=${DEFAULT_PORT} -BeaconPort=${BEACON_PORT} -ini:Game:[/Script/Engine.GameSession]:MaxPlayers=${MAX_PLAYERS}"
+LAUNCH_ARGS="RSDragonwilds -Port=${DEFAULT_PORT} -BeaconPort=${BEACON_PORT} -ini:Game:[/Script/Engine.GameSession]:MaxPlayers=${MAX_PLAYERS}"
 
 if [ -n "${MULTIHOME}" ]; then
     LogInfo "Multihome: ${MULTIHOME}"
     LAUNCH_ARGS="${LAUNCH_ARGS} -MULTIHOME=${MULTIHOME}"
 fi
 
-exec "$SERVER_EXEC" $LAUNCH_ARGS
+if [ "${UE4SS_ENABLED}" != "true" ]; then
+    chmod +x "$SERVER_EXEC"
+    exec "$SERVER_EXEC" $LAUNCH_ARGS -log -NewConsole
+fi
+
+LogInfo "UE4SS enabled, running the Windows server build through Wine"
+
+# Under Wine only part of the log reaches stdout, so follow the log files
+tail -q -n 0 -F "$SERVER_FILES/RSDragonwilds/Saved/Logs/RSDragonwilds.log" 2>/dev/null &
+TAIL_PIDS=("$!")
+tail -q -n 0 -F "$SERVER_FILES/RSDragonwilds/Binaries/Win64/ue4ss/UE4SS.log" 2>/dev/null > >(sed -u 's/^/[UE4SS] /') &
+TAIL_PIDS+=("$!")
+
+export WINEDLLOVERRIDES="dwmapi,version=n,b"
+
+wine "$SERVER_EXEC" $LAUNCH_ARGS -log > /dev/null
+status=$?
+
+kill "${TAIL_PIDS[@]}" 2>/dev/null
+exit "$status"
